@@ -1,0 +1,254 @@
+// Neon Dodge — one-button rocket dodger.
+// Entry generator for make.fun competition
+// post-x-the-agent-builds-a-game-from-20261122-1709
+// ("The agent builds a game from one prompt").
+//
+// Run with: node main.ts   (Node 22+, pure stdlib, no installs, no network)
+// Writes the complete playable game as a single self-contained
+// output/index.html next to this file. Deterministic output.
+// Game: Neon Dodge — hold to thrust, release to fall, dodge the meteors.
+
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const GAME_HTML = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Neon Dodge — one-button rocket dodger</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; background: #050510; overflow: hidden; font-family: 'Segoe UI', system-ui, sans-serif; }
+  #wrap { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: radial-gradient(ellipse at 50% 30%, #12082e 0%, #050510 70%); }
+  canvas { display: block; border-radius: 12px; box-shadow: 0 0 60px rgba(120,60,255,.35), 0 0 0 1px rgba(255,255,255,.06); touch-action: none; }
+  #hint { position: fixed; bottom: 14px; left: 0; right: 0; text-align: center; color: #8b8bb3; font-size: 13px; letter-spacing: .08em; pointer-events: none; }
+  #hint b { color: #e8e8ff; }
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="game" width="800" height="500"></canvas></div>
+<div id="hint">HOLD <b>CLICK / SPACE / TOUCH</b> TO THRUST &nbsp;·&nbsp; RELEASE TO FALL &nbsp;·&nbsp; <b>R</b> RESTART</div>
+<script>
+(function () {
+  var canvas = document.getElementById('game');
+  var ctx = canvas.getContext('2d');
+  var W = 800, H = 500;
+  function fit() {
+    var s = Math.min(window.innerWidth / W, window.innerHeight / H) * 0.96;
+    canvas.style.width = (W * s) + 'px';
+    canvas.style.height = (H * s) + 'px';
+  }
+  window.addEventListener('resize', fit);
+  fit();
+  var stars = [];
+  for (var i = 0; i < 90; i++) {
+    stars.push({ x: Math.random() * W, y: Math.random() * H, r: Math.random() * 1.6 + 0.4, s: Math.random() * 0.6 + 0.2 });
+  }
+  var state = 'ready'; // ready | playing | over
+  var rocket = { x: 130, y: H / 2, vy: 0, r: 16 };
+  var meteors = [];
+  var parts = [];
+  var holding = false;
+  var score = 0, best = 0, frames = 0, spawnT = 0, startT = 0, elapsed = 0;
+  try { best = parseInt(localStorage.getItem('neonDodgeBest') || '0', 10) || 0; } catch (e) {}
+  window.__game = {
+    get score() { return score; },
+    get state() { return state; },
+    get best() { return best; }
+  };
+  function reset() {
+    rocket.y = H / 2; rocket.vy = 0;
+    meteors = []; parts = []; score = 0; frames = 0; spawnT = 0;
+    startT = performance.now();
+  }
+  function spawnMeteor() {
+    var r = 14 + Math.random() * 20;
+    var speed = 3 + Math.min(4.5, elapsed / 12);
+    meteors.push({ x: W + 40, y: 30 + Math.random() * (H - 60), r: r, v: speed + Math.random() * 1.5, rot: Math.random() * Math.PI * 2, vr: (Math.random() - 0.5) * 0.06 });
+  }
+  function burst(x, y, color, n) {
+    for (var i = 0; i < n; i++) {
+      var a = Math.random() * Math.PI * 2, sp = 1 + Math.random() * 3.5;
+      parts.push({ x: x, y: y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, life: 1, color: color });
+    }
+  }
+  function step() {
+    if (state === 'playing') {
+      frames++;
+      elapsed = (performance.now() - startT) / 1000;
+      score = Math.floor(elapsed * 10);
+      if (holding) rocket.vy -= 0.55; else rocket.vy += 0.42;
+      rocket.vy = Math.max(-9, Math.min(9, rocket.vy));
+      rocket.y += rocket.vy;
+      if (rocket.y < 18) { rocket.y = 18; rocket.vy = 0; }
+      if (rocket.y > H - 18) { rocket.y = H - 18; rocket.vy = 0; }
+      spawnT--;
+      if (spawnT <= 0) { spawnMeteor(); spawnT = Math.max(26, 58 - Math.floor(elapsed * 1.2)); }
+      for (var i = meteors.length - 1; i >= 0; i--) {
+        var m = meteors[i];
+        m.x -= m.v; m.rot += m.vr;
+        if (m.x < -50) meteors.splice(i, 1);
+        var dx = m.x - rocket.x, dy = m.y - rocket.y;
+        if (dx * dx + dy * dy < (m.r + rocket.r - 4) * (m.r + rocket.r - 4)) {
+          state = 'over';
+          burst(rocket.x, rocket.y, '#ff5d7a', 40);
+          burst(rocket.x, rocket.y, '#ffb347', 25);
+          if (score > best) { best = score; try { localStorage.setItem('neonDodgeBest', String(best)); } catch (e) {} }
+        }
+      }
+      if (holding && frames % 2 === 0) {
+        parts.push({ x: rocket.x - 20, y: rocket.y + (Math.random() * 8 - 4), vx: -2 - Math.random() * 2, vy: (Math.random() - 0.5) * 2, life: 1, color: Math.random() < 0.5 ? '#ff9d00' : '#ff5d7a' });
+      }
+    }
+    for (var j = parts.length - 1; j >= 0; j--) {
+      var p = parts[j];
+      p.x += p.vx; p.y += p.vy; p.life -= 0.03;
+      if (p.life <= 0) parts.splice(j, 1);
+    }
+  }
+  function draw() {
+    ctx.fillStyle = '#070718';
+    ctx.fillRect(0, 0, W, H);
+    var g = ctx.createRadialGradient(620, 90, 10, 620, 90, 320);
+    g.addColorStop(0, 'rgba(120,60,255,0.20)');
+    g.addColorStop(1, 'rgba(120,60,255,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+    var g2 = ctx.createRadialGradient(120, 420, 10, 120, 420, 300);
+    g2.addColorStop(0, 'rgba(0,200,255,0.12)');
+    g2.addColorStop(1, 'rgba(0,200,255,0)');
+    ctx.fillStyle = g2;
+    ctx.fillRect(0, 0, W, H);
+    for (var i = 0; i < stars.length; i++) {
+      var st = stars[i];
+      st.x -= st.s;
+      if (st.x < 0) { st.x = W; st.y = Math.random() * H; }
+      ctx.fillStyle = 'rgba(255,255,255,' + (0.3 + 0.7 * Math.abs(Math.sin(frames * 0.02 + i))) + ')';
+      ctx.beginPath(); ctx.arc(st.x, st.y, st.r, 0, Math.PI * 2); ctx.fill();
+    }
+    for (var k = 0; k < meteors.length; k++) {
+      var m = meteors[k];
+      ctx.save();
+      ctx.translate(m.x, m.y);
+      ctx.rotate(m.rot);
+      ctx.fillStyle = '#8a6d4b';
+      ctx.beginPath();
+      for (var a = 0; a < 8; a++) {
+        var ang = a / 8 * Math.PI * 2;
+        var rr = m.r * (0.85 + 0.3 * Math.abs(Math.sin(a * 2.7)));
+        var px = Math.cos(ang) * rr, py = Math.sin(ang) * rr;
+        if (a === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+      }
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = 'rgba(255,120,60,0.25)';
+      ctx.beginPath(); ctx.arc(-m.r * 0.25, -m.r * 0.25, m.r * 0.45, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = 'rgba(255,180,120,0.5)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.restore();
+    }
+    for (var j = 0; j < parts.length; j++) {
+      var p = parts[j];
+      ctx.globalAlpha = Math.max(0, p.life);
+      ctx.fillStyle = p.color;
+      ctx.beginPath(); ctx.arc(p.x, p.y, 3 * p.life + 1, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    ctx.save();
+    ctx.translate(rocket.x, rocket.y);
+    var tilt = Math.max(-0.45, Math.min(0.45, rocket.vy * 0.05));
+    ctx.rotate(tilt);
+    if (holding && state === 'playing') {
+      ctx.fillStyle = '#ff9d00';
+      ctx.beginPath();
+      ctx.moveTo(-18, 6);
+      ctx.lineTo(-30 - Math.random() * 10, 0);
+      ctx.lineTo(-18, -6);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.fillStyle = '#e8ecff';
+    ctx.beginPath();
+    ctx.moveTo(22, 0); ctx.lineTo(-12, 12); ctx.lineTo(-18, 0); ctx.lineTo(-12, -12);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = '#7c5cff';
+    ctx.beginPath(); ctx.arc(2, 0, 7, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#00e5ff';
+    ctx.beginPath(); ctx.arc(4, 0, 3.5, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 34px "Segoe UI", system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(String(score), W / 2, 52);
+    ctx.font = '13px "Segoe UI", system-ui, sans-serif';
+    ctx.fillStyle = '#9a9ac2';
+    ctx.fillText('BEST  ' + best, W / 2, 74);
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#9a9ac2';
+    ctx.font = 'bold 15px "Segoe UI", system-ui, sans-serif';
+    ctx.fillText('NEON DODGE', 18, 30);
+    if (state === 'ready') {
+      ctx.fillStyle = 'rgba(5,5,20,0.72)';
+      ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 44px "Segoe UI", system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('NEON DODGE', W / 2, H / 2 - 56);
+      ctx.font = '20px "Segoe UI", system-ui, sans-serif';
+      ctx.fillStyle = '#cfcffb';
+      ctx.fillText('One button. One rocket. Infinite meteors.', W / 2, H / 2 - 16);
+      ctx.fillStyle = '#00e5ff';
+      ctx.font = 'bold 20px "Segoe UI", system-ui, sans-serif';
+      ctx.fillText('HOLD to thrust — RELEASE to fall', W / 2, H / 2 + 26);
+      ctx.fillStyle = '#9a9ac2';
+      ctx.font = '16px "Segoe UI", system-ui, sans-serif';
+      ctx.fillText('Click, hold Space, or touch — then survive.', W / 2, H / 2 + 58);
+    }
+    if (state === 'over') {
+      ctx.fillStyle = 'rgba(5,5,20,0.72)';
+      ctx.fillRect(0, 0, W, H);
+      ctx.fillStyle = '#ff5d7a';
+      ctx.font = 'bold 40px "Segoe UI", system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('GAME OVER', W / 2, H / 2 - 40);
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 30px "Segoe UI", system-ui, sans-serif';
+      ctx.fillText('SCORE  ' + score, W / 2, H / 2 + 6);
+      ctx.fillStyle = '#ffd166';
+      ctx.font = '18px "Segoe UI", system-ui, sans-serif';
+      ctx.fillText(score >= best && score > 0 ? 'NEW BEST!' : 'BEST  ' + best, W / 2, H / 2 + 38);
+      ctx.fillStyle = '#9a9ac2';
+      ctx.font = '16px "Segoe UI", system-ui, sans-serif';
+      ctx.fillText('Click or press R to fly again', W / 2, H / 2 + 72);
+    }
+  }
+  function loop() { step(); draw(); requestAnimationFrame(loop); }
+  function press() {
+    if (state === 'over' || state === 'ready') { reset(); state = 'playing'; }
+    holding = true;
+  }
+  function release() { holding = false; }
+  canvas.addEventListener('pointerdown', function (e) { e.preventDefault(); press(); });
+  window.addEventListener('pointerup', release);
+  window.addEventListener('pointercancel', release);
+  window.addEventListener('keydown', function (e) {
+    if (e.code === 'Space' || e.code === 'ArrowUp') { e.preventDefault(); if (!e.repeat) press(); }
+    if (e.code === 'KeyR' && state === 'over') { reset(); state = 'playing'; }
+  });
+  window.addEventListener('keyup', function (e) { if (e.code === 'Space' || e.code === 'ArrowUp') release(); });
+  loop();
+})();
+</script>
+</body>
+</html>`;
+
+// Write the game next to this file, in output/index.html.
+const outDir = join(dirname(fileURLToPath(import.meta.url)), 'output');
+mkdirSync(outDir, { recursive: true });
+const outFile = join(outDir, 'index.html');
+writeFileSync(outFile, GAME_HTML, 'utf8');
+console.log('Wrote ' + outFile + ' (' + GAME_HTML.length + ' bytes)');
